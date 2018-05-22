@@ -137,7 +137,8 @@ class VRAE:
         driver_loss = -T.mean(T.nnet.categorical_crossentropy(driver_output, train_labels[batch*self.batch_size:(batch+1)*self.batch_size]))
 
         #Compute all the gradients
-        gradients = T.grad(logpx+100*driver_loss, self.params.values(), disconnected_inputs='ignore')
+        gradients = T.grad(logpx+driver_loss, self.params.values(), disconnected_inputs='ignore')
+        #gradients = T.grad(driver_loss, self.params.values(), disconnected_inputs='ignore')
 
         #Let Theano handle the updates on parameters for speed
         updates = OrderedDict()
@@ -168,6 +169,14 @@ class VRAE:
         x_val = theano.shared(val_data.transpose(1, 0, 2)).astype(theano.config.floatX)
         givens[x] = x_val[:, batch*self.batch_size:(batch+1)*self.batch_size,:]
         self.likelihood = theano.function([batch], [logpxz.mean(), driver_loss], givens=givens)
+
+        x_test = T.tensor3("x_test")
+        test_givens = {
+            x: x_test,
+            h0_enc: np.zeros((self.batch_size, self.hidden_units_encoder)).astype(theano.config.floatX), 
+        }
+
+        self.encoder = theano.function([x_test], h_encoder, givens=test_givens)
 
 
         return True

@@ -10,6 +10,7 @@ import argparse
 import theano
 import progressbar
 from sklearn.preprocessing import LabelEncoder
+from sklearn.neural_network import MLPClassifier
 
 #np.random.seed(42)
 
@@ -51,29 +52,26 @@ def load_data(args):
     split_idx = int((1-args.val_frac) * trip_segments.shape[0])
     return trip_segments[:split_idx, 1:, :], labels[:split_idx], trip_segments[split_idx:, 1:, :], labels[split_idx:]
 
-args = parse_args()
-
-x_train, t_train, x_valid, t_valid = load_data(args)
-num_drivers = np.max(t_train)+1
-model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size)
-
-
-batch_order = np.arange(int(x_train.shape[0] / model.batch_size))
-val_batch_order = np.arange(int(x_valid.shape[0] / model.batch_size))
-epoch = 0
-LB_list = []
-path = "./cache"
-
-model.create_gradientfunctions(x_train, t_train, x_valid, t_valid)
-if os.path.isfile(path + "params.pkl"):
-    print("Restarting from earlier saved parameters!")
-    model.load_parameters(path)
-    LB_list = np.load(path + "LB_list.npy")
-    epoch = len(LB_list)
-
 if __name__ == "__main__":
-    print("iterating")
+    args = parse_args()
     save_path = os.path.join("saved_weights", datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d_%H:%M:%S"))
+    os.makedirs(save_path)
+    with open(os.path.join(save_path, 'args.pkl'), 'w') as f:
+        pickle.dump(args, f)
+
+    x_train, t_train, x_valid, t_valid = load_data(args)
+    num_drivers = np.max(t_train)+1
+    model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size)
+
+
+    batch_order = np.arange(int(x_train.shape[0] / model.batch_size))
+    val_batch_order = np.arange(int(x_valid.shape[0] / model.batch_size))
+    epoch = 0
+    LB_list = []
+
+    model.create_gradientfunctions(x_train, t_train, x_valid, t_valid)
+
+    print("iterating")
     while epoch < args.num_epochs:
         epoch += 1
         start = time.time()
@@ -112,3 +110,15 @@ if __name__ == "__main__":
         print("LB loss = {}, driver_loss = {}".format(val_LB1, val_LB2))
         print("LB on validation set: {0}".format(valid_LB/len(val_batch_order)))
 
+        ###Classification
+        h_train = []
+        h_val = []
+        for i in range(x_train.shape[0]//model.batch_size):
+            h_train.append(model.encoder(x_train[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
+        for i in range(x_valid.shape[0]//model.batch_size):
+            h_val.append(model.encoder(x_valid[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
+        h_train = np.concatenate(h_train)
+        h_val = np.concatenate(h_val)
+        clf = MLPClassifier(hidden_layer_sizes=(64,64))
+        clf.fit(h_train, t_train[:h_train.shape[0]])
+        print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid[:h_val.shape[0]]))
