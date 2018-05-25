@@ -8,12 +8,13 @@ from collections import OrderedDict
 
 class VRAE:
     """This class implements the Variational Recurrent Auto Encoder"""
-    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256):
+    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda = 0.5):
         self.batch_size = batch_size
         self.hidden_units_encoder = hidden_units_encoder
         self.hidden_units_decoder = hidden_units_decoder
         self.features = features
         self.latent_variables = latent_variables
+        self.lamda = lamda
 
         self.b1 = theano.shared(np.array(b1).astype(theano.config.floatX), name = "b1")
         self.b2 = theano.shared(np.array(b2).astype(theano.config.floatX), name = "b2")
@@ -22,14 +23,28 @@ class VRAE:
 
         #Initialize all variables as shared variables so model can be run on GPU
 
-        #encoder
-        sigma_init = np.sqrt(2.0/(hidden_units_encoder+features))
-        W_xhe = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_encoder)).astype(theano.config.floatX), name='W_xhe')
-
-        sigma_init = np.sqrt(1.0/(hidden_units_encoder))
-        W_hhe = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder,hidden_units_encoder)).astype(theano.config.floatX), name='W_hhe')
+        #gru encoder
         
-        b_he = theano.shared(np.zeros((hidden_units_encoder,1)).astype(theano.config.floatX), name='b_hhe', broadcastable=(False,True))
+        sigma_init = np.sqrt(2.0/(hidden_units_encoder+features))
+        U_z = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_encoder)).astype(theano.config.floatX), name='U_z')
+        sigma_init = np.sqrt(1.0/(hidden_units_encoder))
+        W_z = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder,hidden_units_encoder)).astype(theano.config.floatX), name='W_z')
+        b_z = theano.shared(np.zeros((hidden_units_encoder,1)).astype(theano.config.floatX), name='b_z', broadcastable=(False,True))
+
+        sigma_init = np.sqrt(2.0/(hidden_units_encoder+features))
+        U_r = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_encoder)).astype(theano.config.floatX), name='U_r')
+        sigma_init = np.sqrt(1.0/(hidden_units_encoder))
+        W_r = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder,hidden_units_encoder)).astype(theano.config.floatX), name='W_r')
+        b_r = theano.shared(np.zeros((hidden_units_encoder,1)).astype(theano.config.floatX), name='b_r', broadcastable=(False,True))
+
+        sigma_init = np.sqrt(2.0/(hidden_units_encoder+features))
+        U_h = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_encoder)).astype(theano.config.floatX), name='U_h')
+        sigma_init = np.sqrt(1.0/(hidden_units_encoder))
+        W_h = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder,hidden_units_encoder)).astype(theano.config.floatX), name='W_h')
+        b_h = theano.shared(np.zeros((hidden_units_encoder,1)).astype(theano.config.floatX), name='b_h', broadcastable=(False,True))
+
+
+        #latent
 
         sigma_init = np.sqrt(2.0/(latent_variables+hidden_units_encoder))
         W_hmu = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder, latent_variables)).astype(theano.config.floatX), name='W_hmu')
@@ -38,26 +53,42 @@ class VRAE:
         W_hsigma = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder, latent_variables)).astype(theano.config.floatX), name='W_hsigma')
         b_hsigma = theano.shared(np.zeros((latent_variables,1)).astype(theano.config.floatX), name='b_hsigma', broadcastable=(False,True))
 
+        # gru decoder
+        sigma_init = np.sqrt(2.0/(hidden_units_decoder+features))
+        U_dec_z = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_decoder)).astype(theano.config.floatX), name='U_dec_z')
+        sigma_init = np.sqrt(1.0/(hidden_units_decoder))
+        W_dec_z = theano.shared(np.random.normal(0,sigma_init,(hidden_units_decoder,hidden_units_decoder)).astype(theano.config.floatX), name='W_dec_z')
+        b_dec_z = theano.shared(np.zeros((hidden_units_decoder,1)).astype(theano.config.floatX), name='b_dec_z', broadcastable=(False,True))
+
+        sigma_init = np.sqrt(2.0/(hidden_units_decoder+features))
+        U_dec_r = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_decoder)).astype(theano.config.floatX), name='U_dec_r')
+        sigma_init = np.sqrt(1.0/(hidden_units_decoder))
+        W_dec_r = theano.shared(np.random.normal(0,sigma_init,(hidden_units_decoder,hidden_units_decoder)).astype(theano.config.floatX), name='W_dec_r')
+        b_dec_r = theano.shared(np.zeros((hidden_units_decoder,1)).astype(theano.config.floatX), name='b_dec_r', broadcastable=(False,True))
+
+        sigma_init = np.sqrt(2.0/(hidden_units_decoder+features))
+        U_dec_h = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_decoder)).astype(theano.config.floatX), name='U_dec_h')
+        sigma_init = np.sqrt(1.0/(hidden_units_decoder))
+        W_dec_h = theano.shared(np.random.normal(0,sigma_init,(hidden_units_decoder,hidden_units_decoder)).astype(theano.config.floatX), name='W_dec_h')
+        b_dec_h = theano.shared(np.zeros((hidden_units_decoder,1)).astype(theano.config.floatX), name='b_dec_h', broadcastable=(False,True))
+
+        sigma_init = np.sqrt(2.0/(hidden_units_decoder+features))
+        W_hx = theano.shared(np.random.normal(0,sigma_init,(hidden_units_decoder,features)).astype(theano.config.floatX), name='W_hx')
+        b_hx = theano.shared(np.zeros((features,1)).astype(theano.config.floatX), name='b_hx', broadcastable=(False,True))
+
         #decoder
         W_zh = theano.shared(np.random.normal(0,sigma_init,(latent_variables, hidden_units_decoder)).astype(theano.config.floatX), name='W_zh')
         b_zh = theano.shared(np.zeros((hidden_units_decoder,1)).astype(theano.config.floatX), name='b_zh', broadcastable=(False,True))
 
-        sigma_init = np.sqrt(1.0/(hidden_units_encoder))
-        W_hhd = theano.shared(np.random.normal(0,sigma_init,(hidden_units_decoder,hidden_units_decoder)).astype(theano.config.floatX), name='W_hhd')
-        W_xhd = theano.shared(np.random.normal(0,sigma_init,(features,hidden_units_decoder)).astype(theano.config.floatX), name='W_hxd')
-        
-        b_hd = theano.shared(np.zeros((hidden_units_decoder,1)).astype(theano.config.floatX), name='b_hxd', broadcastable=(False,True))
-        
-        sigma_init = np.sqrt(2.0/(features+hidden_units_encoder))
-        W_hx = theano.shared(np.random.normal(0,sigma_init,(hidden_units_decoder, features)).astype(theano.config.floatX), name='W_hx')
-        b_hx = theano.shared(np.zeros((features,1)).astype(theano.config.floatX), name='b_hx', broadcastable=(False,True))
 
         sigma_init = np.sqrt(2.0/(hidden_units_encoder + num_drivers))
         W_driver = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder, num_drivers)).astype(theano.config.floatX), name='W_driver')
         b_driver = theano.shared(np.zeros((num_drivers,1)).astype(theano.config.floatX), name='b_driver', broadcastable=(False,True))
 
-        self.params = OrderedDict([("W_xhe", W_xhe), ("W_hhe", W_hhe), ("b_he", b_he), ("W_hmu", W_hmu), ("b_hmu", b_hmu), \
-            ("W_hsigma", W_hsigma), ("b_hsigma", b_hsigma), ("W_zh", W_zh), ("b_zh", b_zh), ("W_hhd", W_hhd), ("W_xhd", W_xhd), ("b_hd", b_hd),
+        self.params = OrderedDict([("W_z", W_z), ("U_z", U_z), ("b_z", b_z), ("W_r", W_r), ("U_r", U_r), ("b_r", b_r), ("W_h", W_h), ("U_h", U_h), ("b_h", b_h),\
+            ("W_dec_z", W_dec_z), ("U_dec_z", U_dec_z), ("b_dec_z", b_dec_z), ("W_dec_r", W_dec_r), ("U_dec_r", U_dec_r), ("b_dec_r", b_dec_r), ("W_dec_h", W_dec_h), ("U_dec_h", U_dec_h), ("b_dec_h", b_dec_h), \
+            ("W_hmu", W_hmu), ("b_hmu", b_hmu), \
+            ("W_hsigma", W_hsigma), ("b_hsigma", b_hsigma), ("W_zh", W_zh), ("b_zh", b_zh),
             ("W_hx", W_hx), ("b_hx", b_hx), ("W_driver", W_driver), ("b_driver", b_driver)])
 
         #Adam parameters
@@ -76,7 +107,11 @@ class VRAE:
     def create_gradientfunctions(self, train_data, train_labels, val_data, val_labels):
         """This function takes as input the whole dataset and creates the entire model"""
         def encodingstep(x_t, h_t):
-            return T.tanh(T.dot(x_t, self.params["W_xhe"]) + T.dot(h_t, self.params['W_hhe']) + self.params["b_he"].squeeze())
+            z_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_z']) + T.dot(h_t, self.params['W_z']) + self.params['b_z'].squeeze())
+            r_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_r']) + T.dot(h_t, self.params['W_r']) + self.params['b_r'].squeeze())
+            h = T.tanh(T.dot(x_t, self.params['U_h'])+T.dot(h_t*r_t, self.params['W_h']) + self.params['b_h'].squeeze())
+            new_h_t = (1-z_t)*h+z_t*h_t
+            return new_h_t
 
         x = T.tensor3("x")
 
@@ -92,14 +127,13 @@ class VRAE:
         log_sigma_encoder = T.dot(h_encoder, self.params["W_hsigma"]) + self.params["b_hsigma"].squeeze()
 
         #Use a very wide prior to make it possible to learn something with Z
-        logpz = 0.005 * T.sum(1 + log_sigma_encoder - mu_encoder**2 - T.exp(log_sigma_encoder), axis = 1)
+        #logpz = 0.005 * T.sum(1 + log_sigma_encoder - mu_encoder**2 - T.exp(log_sigma_encoder), axis = 1)
+        logpz = 0.5 * T.sum(1 + log_sigma_encoder - mu_encoder**2 - T.exp(log_sigma_encoder), axis = 1)
 
-        seed = 42
-        
         if "gpu" in theano.config.device:
-            srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams(seed=seed)
+            srng = theano.sandbox.cuda.rng_curand.CURAND_RandomStreams()
         else:
-            srng = T.shared_randomstreams.RandomStreams(seed=seed)
+            srng = T.shared_randomstreams.RandomStreams()
 
         #Reparametrize Z
         eps = srng.normal((self.batch_size, self.latent_variables), avg = 0.0, std = 1.0, dtype=theano.config.floatX)
@@ -108,10 +142,13 @@ class VRAE:
         h0_dec = T.tanh(T.dot(z, self.params["W_zh"]) + self.params["b_zh"].squeeze())
 
         def decodingstep(x_t, h_t):
-            h = T.tanh(h_t.dot(self.params["W_hhd"]) + x_t.dot(self.params["W_xhd"]) + self.params["b_hd"].squeeze())
-            x = T.nnet.sigmoid(h.dot(self.params["W_hx"]) + self.params["b_hx"].squeeze())
+            z_dec_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_dec_z']) + T.dot(h_t, self.params['W_dec_z']) + self.params['b_dec_z'].squeeze())
+            r_dec_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_dec_r']) + T.dot(h_t, self.params['W_dec_r']) + self.params['b_dec_r'].squeeze())
+            h = T.tanh(T.dot(x_t, self.params['U_dec_h'])+T.dot(h_t*r_dec_t, self.params['W_dec_h']) + self.params['b_dec_h'].squeeze())
+            new_h_t = (1-z_dec_t)*h + z_dec_t*h_t
+            new_x_t = T.tanh(h.dot(self.params["W_hx"]) + self.params["b_hx"].squeeze())
+            return new_x_t, new_h_t
 
-            return x, h
 
         x0 = T.matrix("x0")
         [y, _], _ = theano.scan(decodingstep,
@@ -120,7 +157,7 @@ class VRAE:
 
         # Clip y to avoid NaNs, necessary when lowerbound goes to 0
         # 128 x 8 x 35
-        y = T.clip(y, 1e-6, 1 - 1e-6)
+        y = T.clip(y, -1 + 1e-6, 1 - 1e-6)
         #logpxz = T.sum(-T.nnet.binary_crossentropy(y,x), axis = 0)
         logpxz = -T.sum(T.pow(y-x, 2), axis = 0)
         logpxz = T.mean(logpxz, axis = 1)
@@ -130,15 +167,19 @@ class VRAE:
 
         #Driver output
         batch = T.iscalar('batch')
+        labels = T.ivector('labels')
+        train_labels = theano.shared(train_labels.astype('int32'))
+        val_labels = theano.shared(val_labels.astype('int32'))
+
 
         driver_output = T.nnet.softmax(T.dot(h_encoder, self.params['W_driver']) + self.params['b_driver'].squeeze())
 
-        train_labels = theano.shared(train_labels)
-        driver_loss = -T.mean(T.nnet.categorical_crossentropy(driver_output, train_labels[batch*self.batch_size:(batch+1)*self.batch_size]))
+        softmax = T.nnet.categorical_crossentropy(driver_output, labels)
+        driver_loss = -T.mean(softmax)
+        #driver_acc = (softmax.argmax(axis=0) == trained_labels).sum()/batch_size
 
         #Compute all the gradients
-        gradients = T.grad(logpx+driver_loss, self.params.values(), disconnected_inputs='ignore')
-        #gradients = T.grad(driver_loss, self.params.values(), disconnected_inputs='ignore')
+        gradients = T.grad((1-self.lamda) * logpx + self.lamda*driver_loss, self.params.values(), disconnected_inputs='ignore')
 
         #Let Theano handle the updates on parameters for speed
         updates = OrderedDict()
@@ -154,13 +195,13 @@ class VRAE:
             updates[m] = new_m
             updates[v] = new_v
 
-        #data = theano.shared(data[:,1:,:].swapaxes(1, 2))
         train_data = theano.shared(train_data.transpose(1,0,2)).astype(theano.config.floatX)
 
         givens = {
             h0_enc: np.zeros((self.batch_size, self.hidden_units_encoder)).astype(theano.config.floatX), 
             x0:     np.zeros((self.batch_size, self.features)).astype(theano.config.floatX),
             x:      train_data[:,batch*self.batch_size:(batch+1)*self.batch_size,:],
+            labels: train_labels[batch*self.batch_size:(batch+1)*self.batch_size]
             
         }
 
@@ -168,7 +209,10 @@ class VRAE:
 
         x_val = theano.shared(val_data.transpose(1, 0, 2)).astype(theano.config.floatX)
         givens[x] = x_val[:, batch*self.batch_size:(batch+1)*self.batch_size,:]
+        givens[labels] = val_labels[batch*self.batch_size:(batch+1)*self.batch_size]
         self.likelihood = theano.function([batch], [logpxz.mean(), driver_loss], givens=givens)
+
+
 
         x_test = T.tensor3("x_test")
         test_givens = {

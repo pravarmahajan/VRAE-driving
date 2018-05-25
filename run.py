@@ -12,8 +12,6 @@ import progressbar
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neural_network import MLPClassifier
 
-#np.random.seed(42)
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rnn_size', type=int, default=64,
@@ -34,6 +32,8 @@ def parse_args():
                         help='fraction to use for validation')
     parser.add_argument('--scale', type=float, default='1.0',
                         help='fraction to use for validation')
+    parser.add_argument('--lamda', type=float, default='0.5',
+                        help='weightage to driver loss')
     args = parser.parse_args()
 
     return args
@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     x_train, t_train, x_valid, t_valid = load_data(args)
     num_drivers = np.max(t_train)+1
-    model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size)
+    model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size, lamda=args.lamda)
 
 
     batch_order = np.arange(int(x_train.shape[0] / model.batch_size))
@@ -90,7 +90,7 @@ if __name__ == "__main__":
         LB /= len(batch_order)
 
         LB_list = np.append(LB_list, LB)
-        print("Epoch {0} finished. LB: {1}, time: {2}".format(epoch, LB, time.time() - start))
+        print("Epoch {0} finished. LB: {1}, driver_lb: {2} time: {3}".format(epoch, LB, batch_LB2/len(batch_order), time.time() - start))
         path = os.path.join(save_path, str(epoch))
         os.makedirs(path)
         model.save_parameters(path)
@@ -117,8 +117,20 @@ if __name__ == "__main__":
             h_train.append(model.encoder(x_train[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
         for i in range(x_valid.shape[0]//model.batch_size):
             h_val.append(model.encoder(x_valid[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
+
         h_train = np.concatenate(h_train)
         h_val = np.concatenate(h_val)
-        clf = MLPClassifier(hidden_layer_sizes=(64,64))
+
+        #classifier = MLP(input=h_train, n_in = args.rnn_size, n_hidden = 64, n_out = num_drivers)
+        #cost = (
+        #    classifier.negative_log_likelihood(y)
+        #    + L1_reg * classifier.L1
+        #    + L2_reg * classifier.L2_sqr
+        #)
+
+        #clf_model = theano.function(inputs=[batch],
+        #                            outputs=classifier.errors(y)
+        clf = MLPClassifier(hidden_layer_sizes=())
         clf.fit(h_train, t_train[:h_train.shape[0]])
+        print("Accuracy on train: %0.4f" % clf.score(h_train, t_train[:h_train.shape[0]]))
         print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid[:h_val.shape[0]]))
