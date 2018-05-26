@@ -11,6 +11,9 @@ import theano
 import progressbar
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neural_network import MLPClassifier
+from sklearn.linear_model import LogisticRegression
+
+from regression import Regressor
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -50,7 +53,7 @@ def load_data(args):
     np.random.set_state(rng_state)
     np.random.shuffle(labels)
     split_idx = int((1-args.val_frac) * trip_segments.shape[0])
-    return trip_segments[:split_idx, 1:, :], labels[:split_idx], trip_segments[split_idx:, 1:, :], labels[split_idx:]
+    return trip_segments[:split_idx, 1:, :], labels[:split_idx], np.random.rand(split_idx, 1), trip_segments[split_idx:, 1:, :], labels[split_idx:], np.random.rand(len(labels)-split_idx, 1)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -59,7 +62,7 @@ if __name__ == "__main__":
     with open(os.path.join(save_path, 'args.pkl'), 'w') as f:
         pickle.dump(args, f)
 
-    x_train, t_train, x_valid, t_valid = load_data(args)
+    x_train, t_train, r_train, x_valid, t_valid, r_valid = load_data(args)
     num_drivers = np.max(t_train)+1
     model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size, lamda=args.lamda)
 
@@ -121,16 +124,13 @@ if __name__ == "__main__":
         h_train = np.concatenate(h_train)
         h_val = np.concatenate(h_val)
 
-        #classifier = MLP(input=h_train, n_in = args.rnn_size, n_hidden = 64, n_out = num_drivers)
-        #cost = (
-        #    classifier.negative_log_likelihood(y)
-        #    + L1_reg * classifier.L1
-        #    + L2_reg * classifier.L2_sqr
-        #)
-
-        #clf_model = theano.function(inputs=[batch],
-        #                            outputs=classifier.errors(y)
         clf = MLPClassifier(hidden_layer_sizes=())
         clf.fit(h_train, t_train[:h_train.shape[0]])
         print("Accuracy on train: %0.4f" % clf.score(h_train, t_train[:h_train.shape[0]]))
         print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid[:h_val.shape[0]]))
+
+        ###Risk Prediction
+        risk_predictor = Regressor((8,8), learning_rate = 0.01, dropout=0.5)
+        risk_predictor.fit(h_train, r_train[:h_train.shape[0]], batch_size=model.batch_size, num_epochs=20, verbose=False)
+        mse = risk_predictor.mse(h_val, r_valid[:h_val.shape[0]])
+        print "MSE for risk prediction on test set %.6f" %(mse)
