@@ -107,8 +107,8 @@ class VRAE:
     def create_gradientfunctions(self, train_data, train_labels, val_data, val_labels):
         """This function takes as input the whole dataset and creates the entire model"""
         def encodingstep(x_t, h_t):
-            z_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_z']) + T.dot(h_t, self.params['W_z']) + self.params['b_z'].squeeze())
-            r_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_r']) + T.dot(h_t, self.params['W_r']) + self.params['b_r'].squeeze())
+            z_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_z']) + T.dot(h_t, self.params['W_z']).squeeze() + self.params['b_z'].squeeze())
+            r_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_r']) + T.dot(h_t, self.params['W_r']).squeeze() + self.params['b_r'].squeeze())
             h = T.tanh(T.dot(x_t, self.params['U_h'])+T.dot(h_t*r_t, self.params['W_h']) + self.params['b_h'].squeeze())
             new_h_t = (1-z_t)*h+z_t*h_t
             return new_h_t
@@ -136,7 +136,7 @@ class VRAE:
             srng = T.shared_randomstreams.RandomStreams()
 
         #Reparametrize Z
-        eps = srng.normal((self.batch_size, self.latent_variables), avg = 0.0, std = 1.0, dtype=theano.config.floatX)
+        eps = srng.normal((x.shape[1], self.latent_variables), avg = 0.0, std = 1.0, dtype=theano.config.floatX)
         z = mu_encoder + T.exp(0.5 * log_sigma_encoder) * eps
 
         h0_dec = T.tanh(T.dot(z, self.params["W_zh"]) + self.params["b_zh"].squeeze())
@@ -166,7 +166,8 @@ class VRAE:
         logpx = T.mean(logpxz + logpz) 
 
         #Driver output
-        batch = T.iscalar('batch')
+        batch_start = T.iscalar('batch_start')
+        batch_end = T.iscalar('batch_end')
         labels = T.ivector('labels')
         train_labels = theano.shared(train_labels.astype('int32'))
         val_labels = theano.shared(val_labels.astype('int32'))
@@ -176,7 +177,6 @@ class VRAE:
 
         softmax = T.nnet.categorical_crossentropy(driver_output, labels)
         driver_loss = -T.mean(softmax)
-        #driver_acc = (softmax.argmax(axis=0) == trained_labels).sum()/batch_size
 
         #Compute all the gradients
         gradients = T.grad((1-self.lamda) * logpx + self.lamda*driver_loss, self.params.values(), disconnected_inputs='ignore')
@@ -198,26 +198,26 @@ class VRAE:
         train_data = theano.shared(train_data.transpose(1,0,2)).astype(theano.config.floatX)
 
         givens = {
-            h0_enc: np.zeros((self.batch_size, self.hidden_units_encoder)).astype(theano.config.floatX), 
-            x0:     np.zeros((self.batch_size, self.features)).astype(theano.config.floatX),
-            x:      train_data[:,batch*self.batch_size:(batch+1)*self.batch_size,:],
-            labels: train_labels[batch*self.batch_size:(batch+1)*self.batch_size]
+            h0_enc: T.zeros((batch_end-batch_start, self.hidden_units_encoder)).astype(theano.config.floatX), 
+            x0:     T.zeros((batch_end-batch_start, self.features)).astype(theano.config.floatX),
+            x:      train_data[:,batch_start:batch_end,:],
+            labels: train_labels[batch_start:batch_end]
             
         }
 
-        self.updatefunction = theano.function([epoch, batch], [logpx, driver_loss], updates=updates, givens=givens, allow_input_downcast=True)
+        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpx, driver_loss], updates=updates, givens=givens, allow_input_downcast=True)
 
         x_val = theano.shared(val_data.transpose(1, 0, 2)).astype(theano.config.floatX)
-        givens[x] = x_val[:, batch*self.batch_size:(batch+1)*self.batch_size,:]
-        givens[labels] = val_labels[batch*self.batch_size:(batch+1)*self.batch_size]
-        self.likelihood = theano.function([batch], [logpxz.mean(), driver_loss], givens=givens)
+        givens[x] = x_val[:, batch_start:batch_end,:]
+        givens[labels] = val_labels[batch_start:batch_end]
+        self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss], givens=givens)
 
 
 
         x_test = T.tensor3("x_test")
         test_givens = {
             x: x_test,
-            h0_enc: np.zeros((self.batch_size, self.hidden_units_encoder)).astype(theano.config.floatX), 
+            h0_enc: T.zeros((x_test.shape[1], self.hidden_units_encoder)).astype(theano.config.floatX), 
         }
 
         self.encoder = theano.function([x_test], h_encoder, givens=test_givens)

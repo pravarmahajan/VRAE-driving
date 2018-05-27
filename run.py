@@ -67,8 +67,8 @@ if __name__ == "__main__":
     model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size, lamda=args.lamda)
 
 
-    batch_order = np.arange(int(x_train.shape[0] / model.batch_size))
-    val_batch_order = np.arange(int(x_valid.shape[0] / model.batch_size))
+    batch_order = np.arange(x_train.shape[0] // model.batch_size + 1)
+    val_batch_order = np.arange(x_valid.shape[0] // model.batch_size + 1)
     epoch = 0
     LB_list = []
 
@@ -85,7 +85,7 @@ if __name__ == "__main__":
         bar = progressbar.ProgressBar()
 
         for batch in bar(batch_order):
-            t1, t2 = model.updatefunction(epoch, batch)
+            t1, t2 = model.updatefunction(epoch, model.batch_size*batch, min(model.batch_size*(batch+1), x_train.shape[0]))
             batch_LB1 += t1
             batch_LB2 += t2
             LB += t1 + t2
@@ -103,7 +103,7 @@ if __name__ == "__main__":
         val_LB1 = 0.0
         val_LB2 = 0.0
         for batch in bar(val_batch_order):
-            t1, t2= model.likelihood(batch)
+            t1, t2= model.likelihood(model.batch_size*batch, min(model.batch_size*(batch+1), x_valid.shape[0]))
             val_LB1 += t1
             val_LB2 += t2
             valid_LB += (t1+t2)
@@ -116,7 +116,7 @@ if __name__ == "__main__":
         ###Classification
         h_train = []
         h_val = []
-        for i in range(x_train.shape[0]//model.batch_size):
+        for i in range(x_train.shape[0]//model.batch_size+1):
             h_train.append(model.encoder(x_train[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
         for i in range(x_valid.shape[0]//model.batch_size):
             h_val.append(model.encoder(x_valid[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
