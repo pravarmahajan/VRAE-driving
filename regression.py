@@ -10,7 +10,7 @@ class Regressor:
     
     def glorot_init_(self, fan_in, fan_out):
         sigma = np.sqrt(2.0/fan_in+fan_out)
-        return np.random.rand(fan_in, fan_out)/sigma
+        return np.random.rand(fan_in, fan_out).astype(theano.config.floatX)/sigma
 
     def __init__(self, hidden_units = (), hidden_activation = T.nnet.relu, learning_rate = 0.1, momentum = 0.9, dropout = 0.0):
         
@@ -20,7 +20,7 @@ class Regressor:
         self.lr_m = momentum
         self.saved_state = dict()
         self.num_layers = len(self.hidden_units) + 1
-        self.keep_prob = 1-dropout
+        self.keep_prob = np.array(1-dropout).astype(theano.config.floatX)
         self.srng = RandomStreams(np.random.RandomState().randint(999999))
         
     def fit(self, X, y, batch_size = 256, num_epochs = 50, val_split=0.2, verbose=True):
@@ -40,12 +40,12 @@ class Regressor:
         self.weights = []
 
         for (i, h) in enumerate(self.hidden_units):
-            self.biases.append(theano.shared(np.zeros(h)))
+            self.biases.append(theano.shared(np.zeros(h).astype(theano.config.floatX)))
             if i>0:
                 self.weights.append(theano.shared(self.glorot_init_(self.hidden_units[i-1], h)))
 
 
-        self.biases.append(theano.shared(np.zeros(self.out_units)))
+        self.biases.append(theano.shared(np.zeros(self.out_units).astype(theano.config.floatX)))
 
         if len(self.hidden_units) > 0:
             self.weights.append(theano.shared(self.glorot_init_(self.hidden_units[-1], self.out_units)))
@@ -60,7 +60,6 @@ class Regressor:
         y_val = T.matrix('y_val')
 
         keep_prob = T.scalar(dtype=theano.config.floatX)
-        printer = printing.Print("")
         output = x_train
 
         for i in range(self.num_layers):
@@ -97,8 +96,8 @@ class Regressor:
 
         update_func = theano.function([batch], loss, givens = givens, updates=updates)
 
-        self.mse = theano.function([x_val, y_val], mean_loss, givens = {x_train: x_val, y_train: y_val, keep_prob: 1.0})
-        self.predict = theano.function([x_val], output, givens = {x_train: x_val, keep_prob: 1.0})
+        self.mse = theano.function([x_val, y_val], mean_loss, givens = {x_train: x_val, y_train: y_val, keep_prob: np.array(1.0).astype(theano.config.floatX)})
+        self.predict = theano.function([x_val], output, givens = {x_train: x_val, keep_prob: np.array(1.0).astype(theano.config.floatX)})
 
         current_best = float("inf")
 

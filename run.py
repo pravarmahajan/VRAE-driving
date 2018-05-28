@@ -42,9 +42,21 @@ def parse_args():
     return args
 
 def load_data(args):
+    risk_path = "/users/PAS0536/osu9965/Telematics/Trajectories/Selected Drivers/DriverIdToRisk.csv"
     trip_segments = np.load('{}.npy'.format(args.traj_data))/args.scale
     with open(args.traj_data+"_keys.pkl", 'rb') as f:
         labels = np.array(pickle.load(f))[:, 0]
+
+    with open(risk_path, 'r') as f:
+        lines = f.readlines()
+    risk_labels = dict()
+
+    for line in lines[1:]:
+        driver, risk = line.strip().split(',')
+        risk = float(risk)
+        risk_labels[driver] = risk
+    risk_array = np.array([risk_labels[label] for label in labels])
+
     encoder = LabelEncoder()
     labels = encoder.fit_transform(labels)
     print("Number of samples: {}".format(trip_segments.shape[0]))
@@ -52,8 +64,11 @@ def load_data(args):
     np.random.shuffle(trip_segments)
     np.random.set_state(rng_state)
     np.random.shuffle(labels)
+    np.random.set_state(rng_state)
+    np.random.shuffle(risk_array)
+
     split_idx = int((1-args.val_frac) * trip_segments.shape[0])
-    return trip_segments[:split_idx, 1:, :], labels[:split_idx], np.random.rand(split_idx, 1), trip_segments[split_idx:, 1:, :], labels[split_idx:], np.random.rand(len(labels)-split_idx, 1)
+    return trip_segments[:split_idx, 1:, :], labels[:split_idx], np.expand_dims(risk_array[:split_idx], -1), trip_segments[split_idx:, 1:, :], labels[split_idx:], np.expand_dims(risk_array[split_idx:], -1)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -118,19 +133,21 @@ if __name__ == "__main__":
         h_val = []
         for i in range(x_train.shape[0]//model.batch_size+1):
             h_train.append(model.encoder(x_train[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
-        for i in range(x_valid.shape[0]//model.batch_size):
+        for i in range(x_valid.shape[0]//model.batch_size+1):
             h_val.append(model.encoder(x_valid[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
 
         h_train = np.concatenate(h_train)
         h_val = np.concatenate(h_val)
 
         clf = MLPClassifier(hidden_layer_sizes=())
-        clf.fit(h_train, t_train[:h_train.shape[0]])
-        print("Accuracy on train: %0.4f" % clf.score(h_train, t_train[:h_train.shape[0]]))
-        print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid[:h_val.shape[0]]))
+        clf.fit(h_train, t_train)
+        print("Accuracy on train: %0.4f" % clf.score(h_train, t_train))
+        print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid))
 
         ###Risk Prediction
-        risk_predictor = Regressor((8,8), learning_rate = 0.01, dropout=0.5)
-        risk_predictor.fit(h_train, r_train[:h_train.shape[0]], batch_size=model.batch_size, num_epochs=20, verbose=False)
-        mse = risk_predictor.mse(h_val, r_valid[:h_val.shape[0]])
+        risk_predictor = Regressor((64,), learning_rate = 0.001, dropout=0.5)
+        risk_predictor.fit(h_train, r_train.astype(theano.config.floatX), batch_size=model.batch_size, num_epochs=50, verbose=False)
+        mse = risk_predictor.mse(h_train, r_train.astype(theano.config.floatX))
+        print "MSE for risk prediction on train set %.6f" %(mse)
+        mse = risk_predictor.mse(h_val, r_valid.astype(theano.config.floatX))
         print "MSE for risk prediction on test set %.6f" %(mse)
