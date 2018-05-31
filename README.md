@@ -11,7 +11,7 @@ module load python/3.5
 ```
 
 ### Creating new Conda Environment (First Time)
-This will create a new environment named `menv` and install all the dependencies
+This will create a new environment named `myenv` and install all the dependencies
 
 ```
 conda env create -f environment.yml
