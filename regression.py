@@ -12,16 +12,19 @@ class Regressor:
         sigma = np.sqrt(2.0/fan_in+fan_out)
         return np.random.rand(fan_in, fan_out).astype(theano.config.floatX)/sigma
 
-    def __init__(self, hidden_units = (), hidden_activation = T.nnet.relu, learning_rate = 0.1, momentum = 0.9, dropout = 0.0):
+    def __init__(self, hidden_units = (), hidden_activation = T.nnet.relu, learning_rate = 0.1, beta_1 = 0.9, beta_2 = 0.999, dropout = 0.0):
         
         self.hidden_units = hidden_units
         self.activations = [hidden_activation]*len(self.hidden_units) + [T.nnet.sigmoid]
         self.lr = learning_rate
-        self.lr_m = momentum
         self.saved_state = dict()
         self.num_layers = len(self.hidden_units) + 1
         self.keep_prob = np.array(1-dropout).astype(theano.config.floatX)
         self.srng = RandomStreams(np.random.RandomState().randint(999999))
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
+        self.epsilon = 1e-8
+        self.eta = 0.001
         
     def fit(self, X, y, batch_size = 256, num_epochs = 50, val_split=0.2, verbose=True):
         val_idx = int(X.shape[0]*(1-val_split))
@@ -38,7 +41,6 @@ class Regressor:
 
         self.biases = []
         self.weights = []
-
         for (i, h) in enumerate(self.hidden_units):
             self.biases.append(theano.shared(np.zeros(h).astype(theano.config.floatX)))
             if i>0:
@@ -72,8 +74,8 @@ class Regressor:
 
             output = output * mask/keep_prob
 
-        loss = T.sum(T.pow(output- y_train, 2))/y_train.shape[1]
-        mean_loss = T.mean(T.pow(output- y_train, 2))
+        ce_loss = T.mean(T.nnet.binary_crossentropy(output, y_train))
+        mse_loss = T.mean(T.pow(output-y_train, 2))
 
         batch = T.iscalar('batch')
         X_train = theano.shared(X[:val_idx])
@@ -86,17 +88,31 @@ class Regressor:
         }
 
         params =  self.weights + self.biases
-        gradients = T.grad(mean_loss, params)
+        self.m = dict()
+        self.v = dict()
+
+        for param in params:
+            self.m[param] = T.zeros_like(param)
+            self.v[param] = T.zeros_like(param)
+
+        gradients = T.grad(ce_loss, params)
         updates = OrderedDict()
-        momenta = OrderedDict()
 
-        for i, p in enumerate(params):
-            momenta[p] = self.lr_m * momenta.get(p, 0.0) + self.lr * gradients[i]
-            updates[p] = p - momenta[p]
+        epoch = T.iscalar('epoch')
+        beta_1_hat = self.beta_1 ** (1+epoch)
+        beta_2_hat = self.beta_2 ** (1+epoch)
 
-        update_func = theano.function([batch], loss, givens = givens, updates=updates)
+        for (p, g) in zip(params, gradients):
+            self.m[p] = (self.beta_1*self.m[p] + (1-self.beta_1)*g).astype(theano.config.floatX)
+            self.v[p] = (self.beta_2*self.v[p] + (1-self.beta_2)*g*g).astype(theano.config.floatX)
+            m_hat = (self.m[p]/(1-beta_1_hat)).astype(theano.config.floatX)
+            v_hat = (self.v[p]/(1-beta_2_hat)).astype(theano.config.floatX)
+            updates[p] = (p - self.eta*m_hat/(T.sqrt(v_hat) + self.epsilon)).astype(theano.config.floatX)
 
-        self.mse = theano.function([x_val, y_val], mean_loss, givens = {x_train: x_val, y_train: y_val, keep_prob: np.array(1.0).astype(theano.config.floatX)})
+        update_func = theano.function([epoch, batch], ce_loss, givens = givens, updates=updates)
+
+        self.cross_entropy_loss = theano.function([x_val, y_val], ce_loss, givens = {x_train: x_val, y_train: y_val, keep_prob: np.array(1.0).astype(theano.config.floatX)})
+        self.mean_squared_error_loss = theano.function([x_val, y_val], mse_loss, givens = {x_train: x_val, y_train: y_val, keep_prob: np.array(1.0).astype(theano.config.floatX)})
         self.predict = theano.function([x_val], output, givens = {x_train: x_val, keep_prob: np.array(1.0).astype(theano.config.floatX)})
 
         current_best = float("inf")
@@ -109,9 +125,9 @@ class Regressor:
                 bar = lambda x: x
 
             for batch in bar(range(num_batches)):
-                train_loss += update_func(batch)
+                train_loss += update_func(epoch, batch)
             train_loss /= num_samples
-            val_loss = self.mse(X_val, Y_val)
+            val_loss = self.cross_entropy_loss(X_val, Y_val)
 
             if verbose:
                 print("Epoch %d, Train loss: %.6f, Validation loss: %.6f" %(epoch+1, train_loss, val_loss))
@@ -136,7 +152,7 @@ class Regressor:
             param.set_value(value)
 
 if __name__ == "__main__":
-    regression_obj = Regressor(hidden_units=(16,8,4), learning_rate=0.1, momentum=0.9)
+    regression_obj = Regressor(hidden_units=(16,8,4), learning_rate=0.1)
     ndim = 20
     num_points = 2000
     nout = 5
@@ -166,5 +182,5 @@ if __name__ == "__main__":
     X_test = np.random.rand(int(num_points*0.2), ndim)
     Y_test = generate_synthetic_output(X_test, w, b, generate_synthetic_output.min, generate_synthetic_output.max)
 
-    mse_loss = regression_obj.mse(X_test, Y_test)
-    print("mse loss on test data = %.6f" % (mse_loss))
+    mse_loss = regression_obj.cross_entropy_loss(X_test, Y_test)
+    print("cross entropy loss on test data = %.6f" % (mse_loss))

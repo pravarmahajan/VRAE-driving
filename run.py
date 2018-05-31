@@ -15,6 +15,13 @@ from sklearn.linear_model import LogisticRegression
 
 from regression import Regressor
 
+def numpy_ce_loss(model_out, expected_out):
+    if model_out.shape[1] == 1:
+        import ipdb; ipdb.set_trace()
+        return -(np.sum(np.log(model_out) * expected_out + (np.log(1-model_out))*(1-expected_out))/model_out.shape[0])
+    else:
+        return -(np.sum(np.log(model_out) * expected_out)/model_out.shape[0])
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rnn_size', type=int, default=64,
@@ -35,7 +42,9 @@ def parse_args():
                         help='fraction to use for validation')
     parser.add_argument('--scale', type=float, default='1.0',
                         help='fraction to use for validation')
-    parser.add_argument('--lamda', type=float, default='0.5',
+    parser.add_argument('--lamda1', type=float, default='0.33',
+                        help='weightage to driver loss')
+    parser.add_argument('--lamda2', type=float, default='0.33',
                         help='weightage to driver loss')
     args = parser.parse_args()
 
@@ -79,7 +88,7 @@ if __name__ == "__main__":
 
     x_train, t_train, r_train, x_valid, t_valid, r_valid = load_data(args)
     num_drivers = np.max(t_train)+1
-    model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size, lamda=args.lamda)
+    model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda2=args.lamda2)
 
 
     batch_order = np.arange(x_train.shape[0] // model.batch_size + 1)
@@ -87,28 +96,35 @@ if __name__ == "__main__":
     epoch = 0
     LB_list = []
 
-    model.create_gradientfunctions(x_train, t_train, x_valid, t_valid)
+    model.create_gradientfunctions(x_train, t_train, r_train, x_valid, t_valid, r_valid)
 
     print("iterating")
     while epoch < args.num_epochs:
         epoch += 1
         start = time.time()
         np.random.shuffle(batch_order)
-        LB = 0.
-        batch_LB1 = 0.0
-        batch_LB2 = 0.0
+        train_total_loss = 0.0
+        train_driver_loss = 0.0
+        train_risk_loss = 0.0
+        val_total_loss = 0.0
+        val_driver_loss = 0.0
+        val_risk_loss = 0.0
+
         bar = progressbar.ProgressBar()
 
         for batch in bar(batch_order):
-            t1, t2 = model.updatefunction(epoch, model.batch_size*batch, min(model.batch_size*(batch+1), x_train.shape[0]))
-            batch_LB1 += t1
-            batch_LB2 += t2
-            LB += t1 + t2
+            batch_end = min(model.batch_size*(batch+1), x_train.shape[0])
+            batch_start = model.batch_size*batch
+            l1, l2, l3 = model.updatefunction(epoch, batch_start, batch_end)
+            train_total_loss += (l1+l2+l3)*(batch_end-batch_start)
+            train_driver_loss += l2*(batch_end-batch_start)
+            train_risk_loss += l3*(batch_end-batch_start)
 
-        LB /= len(batch_order)
+        train_total_loss /= x_train.shape[0]
+        train_driver_loss /= x_train.shape[0]
+        train_risk_loss /= x_train.shape[0]
 
-        LB_list = np.append(LB_list, LB)
-        print("Epoch {0} finished. LB: {1}, driver_lb: {2} time: {3}".format(epoch, LB, batch_LB2/len(batch_order), time.time() - start))
+        print("Epoch {0} finished. Total Training Loss: {1}, Driver Loss: {2}, Risk Loss: {3}".format(epoch, train_total_loss, train_driver_loss, train_risk_loss))
         path = os.path.join(save_path, str(epoch))
         os.makedirs(path)
         model.save_parameters(path)
@@ -118,15 +134,18 @@ if __name__ == "__main__":
         val_LB1 = 0.0
         val_LB2 = 0.0
         for batch in bar(val_batch_order):
-            t1, t2= model.likelihood(model.batch_size*batch, min(model.batch_size*(batch+1), x_valid.shape[0]))
-            val_LB1 += t1
-            val_LB2 += t2
-            valid_LB += (t1+t2)
+            batch_end = min(model.batch_size*(batch+1), x_valid.shape[0])
+            batch_start = model.batch_size*batch
+            l1, l2, l3 = model.likelihood(batch_start, batch_end)
+            val_total_loss += (l1+l2+l3)*(batch_end-batch_start)
+            val_driver_loss += l2*(batch_end-batch_start)
+            val_risk_loss += l3*(batch_end-batch_start)
 
-        val_LB1/=len(val_batch_order)
-        val_LB2/=len(val_batch_order)
-        print("LB loss = {}, driver_loss = {}".format(val_LB1, val_LB2))
-        print("LB on validation set: {0}".format(valid_LB/len(val_batch_order)))
+        val_total_loss /= x_valid.shape[0]
+        val_driver_loss /= x_valid.shape[0]
+        val_risk_loss /= x_valid.shape[0]
+
+        print("Val loss: {}, Val driver loss: {}, Val Risk Loss: {}".format(val_total_loss, val_driver_loss, val_risk_loss))
 
         ###Classification
         h_train = []
@@ -144,10 +163,15 @@ if __name__ == "__main__":
         print("Accuracy on train: %0.4f" % clf.score(h_train, t_train))
         print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid))
 
+
         ###Risk Prediction
-        risk_predictor = Regressor((64,), learning_rate = 0.001, dropout=0.5)
+        risk_predictor = Regressor((), learning_rate=0.001, dropout=0.0)
         risk_predictor.fit(h_train, r_train.astype(theano.config.floatX), batch_size=model.batch_size, num_epochs=50, verbose=False)
-        mse = risk_predictor.mse(h_train, r_train.astype(theano.config.floatX))
-        print "MSE for risk prediction on train set %.6f" %(mse)
-        mse = risk_predictor.mse(h_val, r_valid.astype(theano.config.floatX))
-        print "MSE for risk prediction on test set %.6f" %(mse)
+        train_risk_loss = risk_predictor.cross_entropy_loss(h_train, r_train.astype(theano.config.floatX))
+        val_risk_loss = risk_predictor.cross_entropy_loss(h_val, r_valid.astype(theano.config.floatX))
+        print "Cross Entropy Loss for risk prediction on train set: %.6f, val_set: %.6f" %(train_risk_loss, val_risk_loss)
+
+        risk_model_pred = risk_predictor.predict(h_val)
+
+        print "RMSE Loss for risk prediction on val set: %6f" %(np.sqrt(risk_predictor.mean_squared_error_loss(h_val, r_valid.astype(theano.config.floatX))))
+
