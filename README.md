@@ -52,6 +52,7 @@ The list of options available for passing as command line arguments is given in 
 ## Results
 ### Driver prediction
 |lambda|accuracy|
+|------|--------|
 |0.0|15%|
 |0.5|29%|
 |1.0|27%|
