@@ -48,3 +48,15 @@ qsub run.sub
 ```
 
 The list of options available for passing as command line arguments is given in `run.py`script, `parse_args` function
+
+## Results
+### Driver prediction
+|lambda|accuracy|
+|0.0|15%|
+|0.5|29%|
+|1.0|27%|
+
+Lambda is the factor which indicates the weightage given to the driver's prediction loss while calculating the total loss.
+
+### Risk prediction
+MSE for risk prediction loss varies between 0.05 and 0.07 for different values of lamdba, with as well as without factoring in the risk prediction loss while calculating total loss for back propagation. This means that the model isn't able to learn much about the risk prediction, since the standard deviation of the error is around 0.25.
