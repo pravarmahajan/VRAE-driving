@@ -1,0 +1,12 @@
+*.pyc
+venv/
+vrnn.o*
+
+__pycache__
+data
+extended_data
+logs
+png
+saved_weights
+theano
+
