@@ -14,10 +14,10 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.linear_model import LogisticRegression
 
 from regression import Regressor
+from returnTrainAndTestData import returnTrainAndTestData
 
 def numpy_ce_loss(model_out, expected_out):
     if model_out.shape[1] == 1:
-        import ipdb; ipdb.set_trace()
         return -(np.sum(np.log(model_out) * expected_out + (np.log(1-model_out))*(1-expected_out))/model_out.shape[0])
     else:
         return -(np.sum(np.log(model_out) * expected_out)/model_out.shape[0])
@@ -32,52 +32,27 @@ def parse_args():
                         help='minibatch size')
     parser.add_argument('--seq_length', type=int, default=128,
                         help='RNN sequence length')
-    parser.add_argument('--n_features', type=int, default=35,
-                        help='Number of features')
     parser.add_argument('--num_epochs', type=int, default=40,
                         help='number of epochs')
-    parser.add_argument('--traj_data', type=str, default='data/smallSample_50_200',
-                        help='path to trajectory data')
-    parser.add_argument('--val_frac', type=float, default='0.2',
-                        help='fraction to use for validation')
-    parser.add_argument('--scale', type=float, default='1.0',
-                        help='fraction to use for validation')
+    parser.add_argument('--num_drivers', type=int, default=50,
+                        help='Number of drivers')
+    parser.add_argument('--num_trajs', type=int, default=200,
+                        help='Number of trips per driver')
+    parser.add_argument('--scale', type=int, default=10,
+                        help='Scale factor')
     parser.add_argument('--lamda1', type=float, default='0.33',
                         help='weightage to driver loss')
     parser.add_argument('--lamda2', type=float, default='0.33',
                         help='weightage to driver loss')
+    parser.add_argument('--suffix', type=str, default='_Hd',
+                        help='suffix')
     args = parser.parse_args()
 
     return args
 
 def load_data(args):
-    risk_path = "/users/PAS0536/osu9965/Telematics/Trajectories/Selected Drivers/DriverIdToRisk.csv"
-    trip_segments = np.load('{}.npy'.format(args.traj_data))/args.scale
-    with open(args.traj_data+"_keys.pkl", 'rb') as f:
-        labels = np.array(pickle.load(f))[:, 0]
-
-    with open(risk_path, 'r') as f:
-        lines = f.readlines()
-    risk_labels = dict()
-
-    for line in lines[1:]:
-        driver, risk = line.strip().split(',')
-        risk = float(risk)
-        risk_labels[driver] = risk
-    risk_array = np.array([risk_labels[label] for label in labels])
-
-    encoder = LabelEncoder()
-    labels = encoder.fit_transform(labels)
-    print("Number of samples: {}".format(trip_segments.shape[0]))
-    rng_state = np.random.get_state()
-    np.random.shuffle(trip_segments)
-    np.random.set_state(rng_state)
-    np.random.shuffle(labels)
-    np.random.set_state(rng_state)
-    np.random.shuffle(risk_array)
-
-    split_idx = int((1-args.val_frac) * trip_segments.shape[0])
-    return trip_segments[:split_idx, 1:, :], labels[:split_idx], np.expand_dims(risk_array[:split_idx], -1), trip_segments[split_idx:, 1:, :], labels[split_idx:], np.expand_dims(risk_array[split_idx:], -1)
+    train_data, train_labels, train_ris, dev_data, dev_labels, dev_risk, test_data, test_labels, test_risk, _, num_features = returnTrainAndTestData([args.num_drivers, args.num_trajs], args.suffix, args.scale)
+    return train_data, train_labels, train_ris, dev_data, dev_labels, dev_risk, test_data, test_labels, test_risk, num_features
 
 if __name__ == "__main__":
     args = parse_args()
@@ -86,9 +61,9 @@ if __name__ == "__main__":
     with open(os.path.join(save_path, 'args.pkl'), 'w') as f:
         pickle.dump(args, f)
 
-    x_train, t_train, r_train, x_valid, t_valid, r_valid = load_data(args)
-    num_drivers = np.max(t_train)+1
-    model = VRAE(args.rnn_size, args.rnn_size, args.n_features, args.latent_size, num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda2=args.lamda2)
+    x_train, t_train, r_train, x_valid, t_valid, r_valid, x_test, t_test, r_test, num_features = load_data(args)
+    
+    model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda2=args.lamda2)
 
 
     batch_order = np.arange(x_train.shape[0] // model.batch_size + 1)
@@ -165,13 +140,13 @@ if __name__ == "__main__":
 
 
         ###Risk Prediction
-        risk_predictor = Regressor((), learning_rate=0.001, dropout=0.0)
-        risk_predictor.fit(h_train, r_train.astype(theano.config.floatX), batch_size=model.batch_size, num_epochs=50, verbose=False)
-        train_risk_loss = risk_predictor.cross_entropy_loss(h_train, r_train.astype(theano.config.floatX))
-        val_risk_loss = risk_predictor.cross_entropy_loss(h_val, r_valid.astype(theano.config.floatX))
-        print "Cross Entropy Loss for risk prediction on train set: %.6f, val_set: %.6f" %(train_risk_loss, val_risk_loss)
+        #risk_predictor = Regressor((), learning_rate=0.001, dropout=0.0)
+        #risk_predictor.fit(h_train, r_train.astype(theano.config.floatX), batch_size=model.batch_size, num_epochs=50, verbose=False)
+        #train_risk_loss = risk_predictor.cross_entropy_loss(h_train, r_train.astype(theano.config.floatX))
+        #val_risk_loss = risk_predictor.cross_entropy_loss(h_val, r_valid.astype(theano.config.floatX))
+        #print "Cross Entropy Loss for risk prediction on train set: %.6f, val_set: %.6f" %(train_risk_loss, val_risk_loss)
 
-        risk_model_pred = risk_predictor.predict(h_val)
+        #risk_model_pred = risk_predictor.predict(h_val)
 
-        print "RMSE Loss for risk prediction on val set: %6f" %(np.sqrt(risk_predictor.mean_squared_error_loss(h_val, r_valid.astype(theano.config.floatX))))
+        #print "RMSE Loss for risk prediction on val set: %6f" %(np.sqrt(risk_predictor.mean_squared_error_loss(h_val, r_valid.astype(theano.config.floatX))))
 

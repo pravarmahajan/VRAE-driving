@@ -171,7 +171,7 @@ class VRAE:
         logpxz = T.mean(logpxz, axis = 1)
 
         #Average over batch dimension
-        logpx = T.mean(logpxz + logpz) 
+        logpx = T.mean(logpxz + logpz)
 
         #Driver output
         batch_start = T.iscalar('batch_start')
@@ -187,14 +187,14 @@ class VRAE:
         driver_loss = -T.mean(cross_entropy)
 
         #Risk output
-        risk_output = T.matrix('risk_output')
+        risk_output = T.vector('risk_output')
         train_r = theano.shared(train_r.astype(theano.config.floatX))
         val_r   = theano.shared(val_r.astype(theano.config.floatX))
-        risk_out_model = T.nnet.sigmoid(T.dot(h_encoder, self.params['W_risk']) + self.params['b_risk'].squeeze())
+        risk_out_model = T.nnet.sigmoid(T.dot(h_encoder, self.params['W_risk']) + self.params['b_risk'].squeeze()).T
         risk_loss = -T.mean(T.nnet.binary_crossentropy(risk_out_model, risk_output))
 
         #Compute all the gradients
-        total_loss = (1-self.lamda1-self.lamda2) * logpx + self.lamda1*driver_loss + self.lamda2*risk_loss
+        total_loss =(1-self.lamda1-self.lamda2) * logpx + self.lamda1*driver_loss + self.lamda2*risk_loss
         gradients = T.grad(total_loss, self.params.values(), disconnected_inputs='ignore')
 
         #Let Theano handle the updates on parameters for speed

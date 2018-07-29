@@ -7,7 +7,5 @@
 #PBS -j oe
 
 cd $PBS_O_WORKDIR
-module load python/3.5
 module load cuda
-source activate myenv
-THEANO_FLAGS="floatX=float32,device=cuda" python -u run.py --scale 40.0 --rnn_size 128 --latent_size 128 --batch_size 256 --num_epochs 100 --lamda1 0.33 --lamda2 0.33
+THEANO_FLAGS="floatX=float32,device=cuda" python2 run.py --num_drivers 50 --num_trajs 200  --rnn_size 128 --latent_size 128 --batch_size 128 --scale 10 --num_epochs 30 --lamda1 1.0 --lamda2 0.0 --suffix _SpdAclRp
