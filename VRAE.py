@@ -8,14 +8,13 @@ from collections import OrderedDict
 
 class VRAE:
     """This class implements the Variational Recurrent Auto Encoder"""
-    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda1 = 0.33, lamda2 = 0.33):
+    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda1 = 0.33):
         self.batch_size = batch_size
         self.hidden_units_encoder = hidden_units_encoder
         self.hidden_units_decoder = hidden_units_decoder
         self.features = features
         self.latent_variables = latent_variables
         self.lamda1 = lamda1
-        self.lamda2 = lamda2
 
         self.b1 = theano.shared(np.array(b1).astype(theano.config.floatX), name = "b1")
         self.b2 = theano.shared(np.array(b2).astype(theano.config.floatX), name = "b2")
@@ -87,17 +86,13 @@ class VRAE:
         W_driver = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder, num_drivers)).astype(theano.config.floatX), name='W_driver')
         b_driver = theano.shared(np.zeros((num_drivers,1)).astype(theano.config.floatX), name='b_driver', broadcastable=(False,True))
 
-        #risk prediction
-        sigma_init = np.sqrt(2.0/(hidden_units_encoder + 1))
-        W_risk = theano.shared(np.random.normal(0,sigma_init,(hidden_units_encoder, 1)).astype(theano.config.floatX), name='W_risk')
-        b_risk = theano.shared(np.zeros((1,1)).astype(theano.config.floatX), name='b_risk', broadcastable=(False,True))
 
         self.params = OrderedDict([("W_z", W_z), ("U_z", U_z), ("b_z", b_z), ("W_r", W_r), ("U_r", U_r), ("b_r", b_r), ("W_h", W_h), ("U_h", U_h), ("b_h", b_h),\
             ("W_dec_z", W_dec_z), ("U_dec_z", U_dec_z), ("b_dec_z", b_dec_z), ("W_dec_r", W_dec_r), ("U_dec_r", U_dec_r), ("b_dec_r", b_dec_r), ("W_dec_h", W_dec_h), ("U_dec_h", U_dec_h), ("b_dec_h", b_dec_h), \
             ("W_hmu", W_hmu), ("b_hmu", b_hmu), \
             ("W_hsigma", W_hsigma), ("b_hsigma", b_hsigma), ("W_zh", W_zh), ("b_zh", b_zh),
             ("W_hx", W_hx), ("b_hx", b_hx), ("W_driver", W_driver), ("b_driver", b_driver),
-            ("W_risk", W_risk), ("b_risk", b_risk)])
+            ])
 
         #Adam parameters
         self.m = OrderedDict()
@@ -112,7 +107,7 @@ class VRAE:
                 self.v[key] = theano.shared(np.zeros_like(value.get_value()).astype(theano.config.floatX), name='v_' + key)
 
 
-    def create_gradientfunctions(self, train_data, train_labels, train_r, val_data, val_labels, val_r):
+    def create_gradientfunctions(self, train_data, train_labels, val_data, val_labels):
         """This function takes as input the whole dataset and creates the entire model"""
         def encodingstep(x_t, h_t):
             z_t = T.nnet.sigmoid(T.dot(x_t, self.params['U_z']) + T.dot(h_t, self.params['W_z']).squeeze() + self.params['b_z'].squeeze())
@@ -186,15 +181,9 @@ class VRAE:
         cross_entropy = T.nnet.categorical_crossentropy(driver_output, labels)
         driver_loss = -T.mean(cross_entropy)
 
-        #Risk output
-        risk_output = T.vector('risk_output')
-        train_r = theano.shared(train_r.astype(theano.config.floatX))
-        val_r   = theano.shared(val_r.astype(theano.config.floatX))
-        risk_out_model = T.nnet.sigmoid(T.dot(h_encoder, self.params['W_risk']) + self.params['b_risk'].squeeze()).T
-        risk_loss = -T.mean(T.nnet.binary_crossentropy(risk_out_model, risk_output))
 
         #Compute all the gradients
-        total_loss =(1-self.lamda1-self.lamda2) * logpx + self.lamda1*driver_loss + self.lamda2*risk_loss
+        total_loss =(1-self.lamda1) * logpx + self.lamda1*driver_loss 
         gradients = T.grad(total_loss, self.params.values(), disconnected_inputs='ignore')
 
         #Let Theano handle the updates on parameters for speed
@@ -218,16 +207,14 @@ class VRAE:
             x0:     T.zeros((batch_end-batch_start, self.features)).astype(theano.config.floatX),
             x:      train_data[:,batch_start:batch_end,:],
             labels: train_labels[batch_start:batch_end],
-            risk_output: train_r[batch_start:batch_end]
         }
 
-        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpx, driver_loss, risk_loss], updates=updates, givens=givens, allow_input_downcast=True)
+        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpx, driver_loss], updates=updates, givens=givens, allow_input_downcast=True)
 
         x_val = theano.shared(val_data.transpose(1, 0, 2)).astype(theano.config.floatX)
         givens[x] = x_val[:, batch_start:batch_end,:]
         givens[labels] = val_labels[batch_start:batch_end]
-        givens[risk_output] = val_r[batch_start:batch_end]
-        self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss, risk_loss], givens=givens)
+        self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss], givens=givens)
 
 
 
@@ -239,7 +226,6 @@ class VRAE:
 
         self.encoder = theano.function([x_test], h_encoder, givens=test_givens)
         h_e = T.matrix('h_e')
-        self.risk_predict = theano.function([h_e], risk_out_model, givens = {h_encoder: h_e})
         self.driver_predict = theano.function([h_e], driver_output, givens={h_encoder: h_e})
 
 
