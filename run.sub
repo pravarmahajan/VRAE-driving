@@ -1,12 +1,12 @@
-#PBS -l walltime=1:00:00
+#PBS -l walltime=0:30:00
 #PBS -l nodes=1:ppn=1:gpus=1
 #PBS -l mem=8GB
 
-#PBS -N vrnn
+#PBS -N vrnn_${NUM_DRIVERS}_${LAMDA1}_${LAMDA_L1}_${LAMDA_L2}_reg
 #PBS -m abe
 #PBS -j oe
 
 cd $PBS_O_WORKDIR
 module load cuda
 source activate myenv
-THEANO_FLAGS="floatX=float32,device=cuda" python run.py --num_drivers 50 --num_trajs 50 --rnn_size 256 --latent_size 256 --batch_size 128 --scale 10 --num_epochs 20 --lamda1 0.33 --suffix _SpdAclRp
+THEANO_FLAGS="floatX=float32,device=cuda" python -u run.py --num_drivers ${NUM_DRIVERS} --num_trajs 50 --rnn_size 256 --latent_size 256 --batch_size 128 --scale 10 --num_epochs 50 --lamda1 ${LAMDA1} --lamda_l1 ${LAMDA_L1} --lamda_l2 ${LAMDA_L2} --suffix _SpdAclRp

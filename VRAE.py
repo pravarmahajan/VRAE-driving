@@ -8,13 +8,15 @@ from collections import OrderedDict
 
 class VRAE:
     """This class implements the Variational Recurrent Auto Encoder"""
-    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda1 = 0.33):
+    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda1 = 0.33, lamda_l2=1.0, lamda_l1=1.0):
         self.batch_size = batch_size
         self.hidden_units_encoder = hidden_units_encoder
         self.hidden_units_decoder = hidden_units_decoder
         self.features = features
         self.latent_variables = latent_variables
         self.lamda1 = lamda1
+        self.lamda_l2 = lamda_l2
+        self.lamda_l1 = lamda_l1
 
         self.b1 = theano.shared(np.array(b1).astype(theano.config.floatX), name = "b1")
         self.b2 = theano.shared(np.array(b2).astype(theano.config.floatX), name = "b2")
@@ -161,7 +163,6 @@ class VRAE:
         # Clip y to avoid NaNs, necessary when lowerbound goes to 0
         # 128 x 8 x 35
         y = T.clip(y, -1 + 1e-6, 1 - 1e-6)
-        #logpxz = T.sum(-T.nnet.binary_crossentropy(y,x), axis = 0)
         logpxz = -T.sum(T.pow(y-x, 2), axis = 0)
         logpxz = T.mean(logpxz, axis = 1)
 
@@ -179,11 +180,13 @@ class VRAE:
         driver_output = T.nnet.softmax(T.dot(h_encoder, self.params['W_driver']) + self.params['b_driver'].squeeze())
 
         cross_entropy = T.nnet.categorical_crossentropy(driver_output, labels)
-        driver_loss = -T.mean(cross_entropy)
 
+        driver_loss = (-T.mean(cross_entropy))
+        l1_loss = (-T.sum([T.sum(abs(v)) for v in self.params.values()]))
+        l2_loss = (-T.sum([T.sum(v**2) for v in self.params.values()]))
 
         #Compute all the gradients
-        total_loss =(1-self.lamda1) * logpx + self.lamda1*driver_loss 
+        total_loss = ((1-self.lamda1) * logpx + self.lamda1*driver_loss + self.lamda_l2*l2_loss + self.lamda_l1*l1_loss)
         gradients = T.grad(total_loss, self.params.values(), disconnected_inputs='ignore')
 
         #Let Theano handle the updates on parameters for speed
@@ -209,14 +212,12 @@ class VRAE:
             labels: train_labels[batch_start:batch_end],
         }
 
-        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpx, driver_loss], updates=updates, givens=givens, allow_input_downcast=True)
+        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpx, total_loss], updates=updates, givens=givens, allow_input_downcast=True)
 
         x_val = theano.shared(val_data.transpose(1, 0, 2)).astype(theano.config.floatX)
         givens[x] = x_val[:, batch_start:batch_end,:]
         givens[labels] = val_labels[batch_start:batch_end]
         self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss], givens=givens)
-
-
 
         x_test = T.tensor3("x_test")
         test_givens = {

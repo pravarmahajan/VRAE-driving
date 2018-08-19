@@ -27,7 +27,7 @@ def get_risk_labels():
 
 def returnTrainAndTestData(args, suffix, normalization):
 
-    extended_data = "extended_data2"
+    extended_data = "extended_data3"
     import pickle as cPickle;
     if normalization == 1:
         norm_suffix = ""

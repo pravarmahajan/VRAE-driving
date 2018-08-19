@@ -9,12 +9,15 @@ import argparse
 
 import theano
 import progressbar
-from sklearn.preprocessing import LabelEncoder
 from sklearn.neural_network import MLPClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import LabelBinarizer
 
-from regression import Regressor
+from classification import Classifier
 from returnTrainAndTestData import returnTrainAndTestData
+
+def copy_the_model(original_model, new_model):
+    for (key, value) in original_model.params.items():
+        new_model.params[key].set_value(value.get_value())
 
 def numpy_ce_loss(model_out, expected_out):
     if model_out.shape[1] == 1:
@@ -42,6 +45,10 @@ def parse_args():
                         help='Scale factor')
     parser.add_argument('--lamda1', type=float, default='0.33',
                         help='weightage to driver loss')
+    parser.add_argument('--lamda_l2', type=float, default='1.0',
+                        help='l2 regularization')
+    parser.add_argument('--lamda_l1', type=float, default='1.0',
+                        help='l1 regularization')
     parser.add_argument('--suffix', type=str, default='_Hd',
                         help='suffix')
     args = parser.parse_args()
@@ -54,6 +61,7 @@ def load_data(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    MAX_EARLY_STOP_COUNT = 5
     save_path = os.path.join("saved_weights", datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d_%H:%M:%S"))
     os.makedirs(save_path)
     with open(os.path.join(save_path, 'args.pkl'), 'w') as f:
@@ -61,7 +69,8 @@ if __name__ == "__main__":
 
     x_train, t_train, x_valid, t_valid, x_test, t_test, num_features = load_data(args)
     
-    model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1)
+    model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1)
+    saved_model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1)
 
 
     batch_order = np.arange(x_train.shape[0] // model.batch_size + 1)
@@ -70,9 +79,14 @@ if __name__ == "__main__":
     LB_list = []
 
     model.create_gradientfunctions(x_train, t_train, x_valid, t_valid)
+    saved_model.create_gradientfunctions(x_train, t_train, x_valid, t_valid)
 
     print("iterating")
-    while epoch < args.num_epochs:
+    best_val_score = -float("inf")
+    prev_val_score = -float("inf")
+    early_stop_count = MAX_EARLY_STOP_COUNT
+
+    while epoch < args.num_epochs and early_stop_count > 0:
         epoch += 1
         start = time.time()
         np.random.shuffle(batch_order)
@@ -117,20 +131,42 @@ if __name__ == "__main__":
         ###Classification
         h_train = []
         h_val = []
-        h_test = []
+
         for i in range(x_train.shape[0]//model.batch_size+1):
             h_train.append(model.encoder(x_train[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
         for i in range(x_valid.shape[0]//model.batch_size+1):
             h_val.append(model.encoder(x_valid[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
-        for i in range(x_test.shape[0]//model.batch_size+1):
-            h_test.append(model.encoder(x_test[i*model.batch_size:(i+1)*model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
 
         h_train = np.concatenate(h_train)
         h_val = np.concatenate(h_val)
-        h_test = np.concatenate(h_test)
 
-        clf = MLPClassifier(hidden_layer_sizes=())
-        clf.fit(h_train, t_train)
-        print("Accuracy on train: %0.4f" % clf.score(h_train, t_train))
-        print("Accuracy on val: %0.4f" % clf.score(h_val, t_valid))
-        print("Accuracy on test: %0.4f" % clf.score(h_test, t_test))
+        clf = Classifier(hidden_units=(), learning_rate=0.001, dropout=0.0)
+        oh_encoder = LabelBinarizer()
+        Y_train = oh_encoder.fit_transform(t_train).astype('float32')
+        Y_valid = oh_encoder.fit_transform(t_valid).astype('float32')
+        Y_test = oh_encoder.transform(t_test).astype('float32')
+
+        clf.fit(h_train, Y_train, batch_size=args.batch_size, num_epochs=200, verbose=False)
+        train_score = clf.get_accuracy(h_train, Y_train)
+        val_score = clf.get_accuracy(h_val, Y_valid)
+        print("Accuracy on train: %0.4f" % train_score)
+        print("Accuracy on val: %0.4f" % val_score)
+
+        if val_score > best_val_score:
+            print "Updating model"
+            best_val_score = val_score
+            copy_the_model(model, saved_model)
+
+        if val_score < prev_val_score:
+            early_stop_count -= 1
+            print("Early stopping count reduced to " + str(early_stop_count))
+        else:
+            early_stop_count = MAX_EARLY_STOP_COUNT
+
+        prev_val_score = val_score
+
+    h_test = []
+    for i in range(x_test.shape[0]//saved_model.batch_size+1):
+        h_test.append(saved_model.encoder(x_test[i*saved_model.batch_size:(i+1)*saved_model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
+    h_test = np.concatenate(h_test)
+    print("Accuracy on test: %0.4f" % clf.get_accuracy(h_test, Y_test))
