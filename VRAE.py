@@ -2,13 +2,14 @@ import numpy as np
 import theano
 import theano.tensor as T
 from theano import printing
+from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 import cPickle as pickle
 from collections import OrderedDict
 
 class VRAE:
     """This class implements the Variational Recurrent Auto Encoder"""
-    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda1 = 0.33, lamda_l2=1.0, lamda_l1=1.0):
+    def __init__(self, hidden_units_encoder, hidden_units_decoder, features, latent_variables, num_drivers, b1=0.9, b2=0.999, learning_rate=0.001, sigma_init=None, batch_size=256, lamda1 = 0.33, lamda_l2=1.0, lamda_l1=1.0, dropout=0.0):
         self.batch_size = batch_size
         self.hidden_units_encoder = hidden_units_encoder
         self.hidden_units_decoder = hidden_units_decoder
@@ -17,6 +18,8 @@ class VRAE:
         self.lamda1 = lamda1
         self.lamda_l2 = lamda_l2
         self.lamda_l1 = lamda_l1
+        self.keep_prob = np.array(1-dropout).astype(theano.config.floatX)
+        self.srng = RandomStreams(np.random.RandomState().randint(999999))
 
         self.b1 = theano.shared(np.array(b1).astype(theano.config.floatX), name = "b1")
         self.b2 = theano.shared(np.array(b2).astype(theano.config.floatX), name = "b2")
@@ -175,9 +178,12 @@ class VRAE:
         labels = T.ivector('labels')
         train_labels = theano.shared(train_labels.astype('int32'))
         val_labels = theano.shared(val_labels.astype('int32'))
+        keep_prob = T.scalar(dtype=theano.config.floatX)
 
 
-        driver_output = T.nnet.softmax(T.dot(h_encoder, self.params['W_driver']) + self.params['b_driver'].squeeze())
+        mask = self.srng.binomial(p=keep_prob, size=(self.hidden_units_encoder,)).astype(theano.config.floatX)/keep_prob
+        driver_output = T.nnet.softmax(T.dot(h_encoder*mask, self.params['W_driver']) + self.params['b_driver'].squeeze())
+        driver_output = driver_output
 
         cross_entropy = T.nnet.categorical_crossentropy(driver_output, labels)
 
@@ -210,13 +216,15 @@ class VRAE:
             x0:     T.zeros((batch_end-batch_start, self.features)).astype(theano.config.floatX),
             x:      train_data[:,batch_start:batch_end,:],
             labels: train_labels[batch_start:batch_end],
+            keep_prob: self.keep_prob
         }
 
-        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpx, total_loss], updates=updates, givens=givens, allow_input_downcast=True)
+        self.updatefunction = theano.function([epoch, batch_start, batch_end], [logpxz.mean(), driver_loss], updates=updates, givens=givens, allow_input_downcast=True)
 
         x_val = theano.shared(val_data.transpose(1, 0, 2)).astype(theano.config.floatX)
         givens[x] = x_val[:, batch_start:batch_end,:]
         givens[labels] = val_labels[batch_start:batch_end]
+        givens[keep_prob] = np.array(1.0).astype(theano.config.floatX)
         self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss], givens=givens)
 
         x_test = T.tensor3("x_test")
@@ -227,7 +235,7 @@ class VRAE:
 
         self.encoder = theano.function([x_test], h_encoder, givens=test_givens)
         h_e = T.matrix('h_e')
-        self.driver_predict = theano.function([h_e], driver_output, givens={h_encoder: h_e})
+        self.driver_predict = theano.function([h_e], driver_output, givens={h_encoder: h_e, keep_prob: np.array(1.0).astype(theano.config.floatX)})
 
 
         return True

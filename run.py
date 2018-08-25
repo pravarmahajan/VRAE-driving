@@ -51,6 +51,8 @@ def parse_args():
                         help='l1 regularization')
     parser.add_argument('--suffix', type=str, default='_Hd',
                         help='suffix')
+    parser.add_argument('--dropout', type=float, default=0.0,
+                        help='dropout')
     args = parser.parse_args()
 
     return args
@@ -69,7 +71,7 @@ if __name__ == "__main__":
 
     x_train, t_train, x_valid, t_valid, x_test, t_test, num_features = load_data(args)
     
-    model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1)
+    model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1, dropout=args.dropout)
     saved_model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1)
 
 
@@ -140,17 +142,32 @@ if __name__ == "__main__":
         h_train = np.concatenate(h_train)
         h_val = np.concatenate(h_val)
 
-        clf = Classifier(hidden_units=(), learning_rate=0.001, dropout=0.0)
+        clf = Classifier(hidden_units=(), learning_rate=0.001, dropout=args.dropout)
         oh_encoder = LabelBinarizer()
         Y_train = oh_encoder.fit_transform(t_train).astype('float32')
         Y_valid = oh_encoder.fit_transform(t_valid).astype('float32')
         Y_test = oh_encoder.transform(t_test).astype('float32')
 
+        ###
+        tm0 = time.time()
         clf.fit(h_train, Y_train, batch_size=args.batch_size, num_epochs=200, verbose=False)
+        tm1 = time.time()
         train_score = clf.get_accuracy(h_train, Y_train)
         val_score = clf.get_accuracy(h_val, Y_valid)
         print("Accuracy on train: %0.4f" % train_score)
         print("Accuracy on val: %0.4f" % val_score)
+        print("Time: %0.4f secs" % int(tm1 - tm0))
+        ####
+
+        #### Del here
+        #tm0 = time.time()
+        #clf_sk = MLPClassifier(hidden_layer_sizes=())
+        #clf_sk.fit(h_train, t_train)
+        #tm1 = time.time()
+        #print("Accuracy on train (sklearn): %0.4f" % clf_sk.score(h_train, t_train))
+        #print("Accuracy on val (sklearn): %0.4f" % clf_sk.score(h_val, t_valid))
+        #print("Time via sklearn: %0.4f secs" % int(tm1 - tm0))
+        ####
 
         if val_score > best_val_score:
             print "Updating model"
@@ -170,3 +187,4 @@ if __name__ == "__main__":
         h_test.append(saved_model.encoder(x_test[i*saved_model.batch_size:(i+1)*saved_model.batch_size].transpose(1, 0, 2).astype(theano.config.floatX)))
     h_test = np.concatenate(h_test)
     print("Accuracy on test: %0.4f" % clf.get_accuracy(h_test, Y_test))
+
