@@ -182,10 +182,16 @@ class VRAE:
 
 
         mask = self.srng.binomial(p=keep_prob, size=(self.hidden_units_encoder,)).astype(theano.config.floatX)/keep_prob
+        printer = printing.Print('')
+
         driver_output = T.nnet.softmax(T.dot(h_encoder*mask, self.params['W_driver']) + self.params['b_driver'].squeeze())
-        driver_output = driver_output
+
+        max_minus_min = (driver_output.max(axis=0)-driver_output.min(axis=0)).sum()
+        var = (driver_output.var(axis=0)).sum()
+        mean = (driver_output.mean(axis=0)).sum()
 
         cross_entropy = T.nnet.categorical_crossentropy(driver_output, labels)
+
 
         driver_loss = (-T.mean(cross_entropy))
         l1_loss = (-T.sum([T.sum(abs(v)) for v in self.params.values()]))
@@ -225,7 +231,7 @@ class VRAE:
         givens[x] = x_val[:, batch_start:batch_end,:]
         givens[labels] = val_labels[batch_start:batch_end]
         givens[keep_prob] = np.array(1.0).astype(theano.config.floatX)
-        self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss], givens=givens)
+        self.likelihood = theano.function([batch_start, batch_end], [logpxz.mean(), driver_loss, max_minus_min, var, mean], givens=givens)
 
         x_test = T.tensor3("x_test")
         test_givens = {

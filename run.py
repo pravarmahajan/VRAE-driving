@@ -11,6 +11,7 @@ import theano
 import progressbar
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelBinarizer
+import pandas as pd
 
 from classification import Classifier
 from returnTrainAndTestData import returnTrainAndTestData
@@ -53,13 +54,15 @@ def parse_args():
                         help='suffix')
     parser.add_argument('--dropout', type=float, default=0.0,
                         help='dropout')
+    parser.add_argument('--threshold', type=float, default=0.1,
+                        help='threshold')
     args = parser.parse_args()
 
     return args
 
 def load_data(args):
-    train_data, train_labels, dev_data, dev_labels, test_data, test_labels, _, num_features = returnTrainAndTestData([args.num_drivers, args.num_trajs], args.suffix, args.scale)
-    return train_data, train_labels, dev_data, dev_labels, test_data, test_labels, num_features
+    train_data, train_labels, dev_data, dev_labels, test_data, test_labels, test_traj, traj_to_driver, num_features = returnTrainAndTestData(args.num_drivers, args.num_trajs, args.threshold, args.suffix, args.scale)
+    return train_data, train_labels, dev_data, dev_labels, test_data, test_labels, test_traj, traj_to_driver, num_features
 
 if __name__ == "__main__":
     args = parse_args()
@@ -69,7 +72,7 @@ if __name__ == "__main__":
     with open(os.path.join(save_path, 'args.pkl'), 'w') as f:
         pickle.dump(args, f)
 
-    x_train, t_train, x_valid, t_valid, x_test, t_test, num_features = load_data(args)
+    x_train, t_train, x_valid, t_valid, x_test, t_test, test_traj, traj_to_driver, num_features = load_data(args)
     
     model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1, dropout=args.dropout)
     saved_model = VRAE(args.rnn_size, args.rnn_size, num_features, args.latent_size, args.num_drivers, batch_size=args.batch_size, lamda1=args.lamda1, lamda_l2=args.lamda_l2, lamda_l1=args.lamda_l1)
@@ -118,12 +121,17 @@ if __name__ == "__main__":
         valid_LB = 0.0
         val_LB1 = 0.0
         val_LB2 = 0.0
+        S_mean  = 0.0
+        S_mmm = 0.0
+        S_var = 0.0
+
         for batch in bar(val_batch_order):
             batch_end = min(model.batch_size*(batch+1), x_valid.shape[0])
             batch_start = model.batch_size*batch
-            l1, l2 = model.likelihood(batch_start, batch_end)
+            l1, l2, s_mmm, s_var, s_mean = model.likelihood(batch_start, batch_end)
             val_total_loss += (l1+l2)*(batch_end-batch_start)
             val_driver_loss += l2*(batch_end-batch_start)
+
 
         val_total_loss /= x_valid.shape[0]
         val_driver_loss /= x_valid.shape[0]
@@ -159,16 +167,6 @@ if __name__ == "__main__":
         print("Time: %0.4f secs" % int(tm1 - tm0))
         ####
 
-        #### Del here
-        #tm0 = time.time()
-        #clf_sk = MLPClassifier(hidden_layer_sizes=())
-        #clf_sk.fit(h_train, t_train)
-        #tm1 = time.time()
-        #print("Accuracy on train (sklearn): %0.4f" % clf_sk.score(h_train, t_train))
-        #print("Accuracy on val (sklearn): %0.4f" % clf_sk.score(h_val, t_valid))
-        #print("Time via sklearn: %0.4f secs" % int(tm1 - tm0))
-        ####
-
         if val_score > best_val_score:
             print "Updating model"
             best_val_score = val_score
@@ -188,3 +186,10 @@ if __name__ == "__main__":
     h_test = np.concatenate(h_test)
     print("Accuracy on test: %0.4f" % clf.get_accuracy(h_test, Y_test))
 
+    y_test = clf.predict(h_test)
+    df = pd.DataFrame(y_test)
+    df['traj'] = test_traj
+    groupby = df.groupby('traj').sum()
+    trip_preds = groupby.idxmax(1)
+    trip_accuracy = float(sum([traj_to_driver[k]==v for (k, v) in trip_preds.iteritems()]))/trip_preds.shape[0]
+    print("Trip level prediction accuracy = {:.2f}".format(trip_accuracy))

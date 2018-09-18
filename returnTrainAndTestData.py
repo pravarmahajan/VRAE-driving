@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.model_selection import train_test_split
 
 def shuffle_in_union(data, keys):
     rng_state = np.random.get_state()
@@ -25,20 +26,30 @@ def get_risk_labels():
     
     return risk_labels
 
-def returnTrainAndTestData(args, suffix, normalization):
-
-    extended_data = "extended_data3"
+def returnTrainAndTestData(driver, num_traj, threshold, suffix, normalization):
+    data_dir = "extended_data3"
+    file_name = "extendedSample"
+    #data_dir = "extended_data2"
+    #file_name = "dissimilar_trajectories"
     import pickle as cPickle;
+
     if normalization == 1:
         norm_suffix = ""
     else:
         norm_suffix = "_" + str(normalization)
-    matrices = load_extended_data('{}/extendedSample_{}_{}{}{}.npy'.format(extended_data, args[0], args[1], norm_suffix, suffix))
-    keys = cPickle.load(open('{}/extendedSample_{}_{}_keys{}{}.pkl'.format(extended_data, args[0], args[1], norm_suffix, suffix), 'rb'))        
+
+    threshold = float(threshold)
+    if threshold > 1e-6:
+        threshold = "{:.1f}_".format(threshold)
+    else:
+        threshold = ""
+
+    matrices = load_extended_data('{}/{}_{}{}_{}{}{}.npy'.format(data_dir, file_name, threshold, driver, num_traj, norm_suffix, suffix))
+    keys = cPickle.load(open('{}/{}_{}{}_{}_keys{}{}.pkl'.format(data_dir, file_name, threshold, driver, num_traj, norm_suffix, suffix), 'rb'))        
     FEATURES = matrices.shape[-1]
     
     # load Train, Dev, Test assignment
-    driverToTrajectoryToSet = cPickle.load(open('{}/driverToTrajectoryToSet_{}_{}.pkl'.format(extended_data, args[0], args[1]), 'rb'))
+    driverToTrajectoryToSet = cPickle.load(open('{}/driverToTrajectoryToSet_{}{}_{}.pkl'.format(data_dir, threshold, driver, num_traj), 'rb'))
     #risk_labels = get_risk_labels()
     
     #Build Train, Dev, Test sets
@@ -51,6 +62,8 @@ def returnTrainAndTestData(args, suffix, normalization):
     
     curTraj = ''
     assign = ''
+    test_traj = []
+    traj_to_driver = {}
     
     driverIds = {}
     
@@ -80,8 +93,10 @@ def returnTrainAndTestData(args, suffix, normalization):
             dev_data.append(m)
             dev_labels.append(dr)
         else:
+          test_traj.append(t)
           test_data.append(m)
           test_labels.append(dr)        
+          traj_to_driver[t] = dr
 
     train_data   = np.asarray(train_data, dtype="float32")
     train_labels = np.asarray(train_labels, dtype="int32")
@@ -91,5 +106,7 @@ def returnTrainAndTestData(args, suffix, normalization):
     test_labels  = np.asarray(test_labels, dtype="int32")
 
     train_data, train_labels = shuffle_in_union(train_data, train_labels)   #Does shuffling do any help ==> it does a great help!!
-  
-    return train_data, train_labels, dev_data, dev_labels, test_data, test_labels, len(driverIds)+1, FEATURES
+    
+    if len(dev_data) == 0:
+        train_data, dev_data, train_labels, dev_labels = train_test_split(train_data, train_labels, test_size=0.2)
+    return train_data, train_labels, dev_data, dev_labels, test_data, test_labels, test_traj, traj_to_driver, FEATURES

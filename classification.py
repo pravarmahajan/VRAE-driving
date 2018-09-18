@@ -31,7 +31,7 @@ class Classifier:
         self.epsilon = 1e-8
         self.eta = 0.001
         
-    def fit(self, X, y, batch_size = 256, num_epochs = 50, val_split=0.2, verbose=True):
+    def fit(self, X, y, batch_size = 256, num_epochs = 50, val_split=0.2, verbose=True, lamda1 = 1e-3, lamda2 = 1e-3):
         val_idx = int(X.shape[0]*(1-val_split))
         num_samples = val_idx
         num_batches = num_samples//batch_size + 1 if not num_samples%batch_size==0 else num_samples//batch_size
@@ -79,7 +79,12 @@ class Classifier:
 
             output = output * mask
 
+        params =  self.weights + self.biases
+
         ce_loss = T.mean(T.nnet.categorical_crossentropy(output, y_train))
+        l1_loss = T.sum([T.sum(abs(v)) for v in params])
+        l2_loss = T.sum([T.sum(v**2) for v in params])
+        total_loss = ce_loss + lamda1 * l1_loss + lamda2 * l2_loss
         mse_loss = T.mean(T.pow(output-y_train, 2))
 
         batch = T.iscalar('batch')
@@ -92,7 +97,6 @@ class Classifier:
             keep_prob: self.keep_prob
         }
 
-        params =  self.weights + self.biases
         self.m = dict()
         self.v = dict()
 
@@ -100,7 +104,7 @@ class Classifier:
             self.m[param] = T.zeros_like(param)
             self.v[param] = T.zeros_like(param)
 
-        gradients = T.grad(ce_loss, params)
+        gradients = T.grad(total_loss, params)
         updates = OrderedDict()
 
         epoch = T.iscalar('epoch')
@@ -114,7 +118,7 @@ class Classifier:
             v_hat = (self.v[p]/(1-beta_2_hat)).astype(theano.config.floatX)
             updates[p] = (p - self.eta*m_hat/(T.sqrt(v_hat) + self.epsilon)).astype(theano.config.floatX)
 
-        update_func = theano.function([epoch, batch], [ce_loss, output.mean()], givens = givens, updates=updates, on_unused_input='ignore')
+        update_func = theano.function([epoch, batch], [total_loss, output.mean()], givens = givens, updates=updates, on_unused_input='ignore')
 
         self.cross_entropy_loss = theano.function([x_val, y_val], ce_loss/x_val.shape[0], givens = {x_train: x_val, y_train: y_val, keep_prob: np.array(1.0).astype(theano.config.floatX)}, on_unused_input='ignore')
         self.mean_squared_error_loss = theano.function([x_val, y_val], mse_loss, givens = {x_train: x_val, y_train: y_val, keep_prob: np.array(1.0).astype(theano.config.floatX)}, on_unused_input='ignore')
